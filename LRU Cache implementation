@@ -1,0 +1,82 @@
+package main
+
+import (
+    "container/list"
+    "sync"
+    "time"
+)
+
+type CacheItem struct {
+    key        string
+    value      string
+    expiration int64
+}
+
+type LRUCache struct {
+    capacity int
+    items    map[string]*list.Element
+    order    *list.List
+    lock     sync.Mutex
+}
+
+func NewLRUCache(capacity int) *LRUCache {
+    return &LRUCache{
+        capacity: capacity,
+        items:    make(map[string]*list.Element),
+        order:    list.New(),
+    }
+}
+
+func (cache *LRUCache) Get(key string) (string, bool) {
+    cache.lock.Lock()
+    defer cache.lock.Unlock()
+
+    if element, found := cache.items[key]; found {
+        cache.order.MoveToFront(element)
+        item := element.Value.(*CacheItem)
+        if time.Now().UnixNano() > item.expiration {
+            cache.order.Remove(element)
+            delete(cache.items, key)
+            return "", false
+        }
+        return item.value, true
+    }
+    return "", false
+}
+
+func (cache *LRUCache) Set(key, value string, duration time.Duration) {
+    cache.lock.Lock()
+    defer cache.lock.Unlock()
+
+    if element, found := cache.items[key]; found {
+        cache.order.MoveToFront(element)
+        item := element.Value.(*CacheItem)
+        item.value = value
+        item.expiration = time.Now().Add(duration).UnixNano()
+    } else {
+        if cache.order.Len() >= cache.capacity {
+            oldest := cache.order.Back()
+            if oldest != nil {
+                cache.order.Remove(oldest)
+                delete(cache.items, oldest.Value.(*CacheItem).key)
+            }
+        }
+        item := &CacheItem{
+            key:        key,
+            value:      value,
+            expiration: time.Now().Add(duration).UnixNano(),
+        }
+        element := cache.order.PushFront(item)
+        cache.items[key] = element
+    }
+}
+
+func (cache *LRUCache) Delete(key string) {
+    cache.lock.Lock()
+    defer cache.lock.Unlock()
+
+    if element, found := cache.items[key]; found {
+        cache.order.Remove(element)
+        delete(cache.items, key)
+    }
+}
